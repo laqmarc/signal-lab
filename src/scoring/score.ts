@@ -1,12 +1,22 @@
 import { isCompletePatch } from '../connections/patch.ts';
 import type { Patch } from '../modules/definitions.ts';
 
+export interface ParameterFeedback {
+  parameter: keyof Patch['parameters'];
+  label: string;
+  control: string;
+  percent: number;
+  direction: 'match' | 'change' | 'up' | 'down';
+  instruction: string;
+}
+
 export interface ScoreResult {
   score: number;
   complete: boolean;
   solved: boolean;
   hint: string;
   parts: { waveform: number; frequency: number; cutoff: number; resonance: number };
+  feedback: ParameterFeedback[];
 }
 
 const similarity = (distance: number) => Math.max(0, 1 - distance);
@@ -25,6 +35,14 @@ export function scorePatch(player: Patch, target: Patch): ScoreResult {
   const weighted = parts.waveform * 30 + parts.frequency * 30 + parts.cutoff * 25 + parts.resonance * 15;
   // Reserve 100% for an exact match, even when rounding would hide a small difference.
   const score = complete ? (solved ? 100 : Math.min(99, Math.round(weighted))) : 0;
+  const feedback: ParameterFeedback[] = complete ? (Object.keys(parts) as (keyof typeof parts)[]).map(parameter => {
+    const match = parts[parameter] === 1;
+    const labels = { waveform: 'Forma d’ona', frequency: 'To', cutoff: 'Brillantor', resonance: 'Caràcter' };
+    const controls = { waveform: 'WAVEFORM', frequency: 'FREQUENCY', cutoff: 'CUTOFF', resonance: 'RESONANCE' };
+    const direction = match ? 'match' : parameter === 'waveform' ? 'change' : p[parameter] > t[parameter] ? 'down' : 'up';
+    const instructions = { match: 'Encertat', change: 'Prova una altra ona', down: 'Baixa el valor', up: 'Puja el valor' };
+    return { parameter, label: labels[parameter], control: controls[parameter], percent: match ? 100 : Math.min(99, Math.round(parts[parameter] * 100)), direction, instruction: instructions[direction] };
+  }) : [];
   let hint = 'So recreat! Has trobat la primera freqüència.';
   if (!complete) hint = 'Falta camí per al so. Connecta OSCILLATOR → FILTER → OUTPUT.';
   else if (!solved) {
@@ -37,5 +55,5 @@ export function scorePatch(player: Patch, target: Patch): ScoreResult {
     };
     hint = hints[worst];
   }
-  return { score, complete, solved, hint, parts };
+  return { score, complete, solved, hint, parts, feedback };
 }

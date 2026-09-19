@@ -1,4 +1,4 @@
-import { connectPorts, disconnectPort } from '../connections/patch.ts';
+import { connectPorts, disconnectPort, requiredConnections } from '../connections/patch.ts';
 import { ports, type Connection, type PortId } from '../modules/definitions.ts';
 
 interface Point { x: number; y: number }
@@ -74,17 +74,19 @@ export class CableUI {
   }
 
   private cancel(): void {
+    const hadPending = this.pending !== null;
     this.pending = null;
     this.cursor = null;
     this.draw();
+    if (hadPending) this.announce('Connexió cancel·lada. Clica OUT i després IN per connectar.');
   }
 
   private finish(port: PortId): void {
     if (!this.pending || port === this.pending) { this.cancel(); return; }
     const next = connectPorts(this.connections, this.pending, port);
     if (!next) {
-      this.announce('Aquesta connexió no és vàlida. Uneix OSC OUT amb FILTER IN, o FILTER OUT amb OUTPUT IN.');
       this.cancel();
+      this.announce('Aquesta connexió no és vàlida. Uneix OSC OUT amb FILTER IN, o FILTER OUT amb OUTPUT IN.');
       return;
     }
     this.commit(next);
@@ -127,6 +129,7 @@ export class CableUI {
   private draw(): void {
     this.svg.replaceChildren();
     this.svg.setAttribute('viewBox', `0 0 ${this.root.clientWidth} ${this.root.clientHeight}`);
+    const nextCable = requiredConnections.find(required => !this.connections.some(c => c.from === required.from && c.to === required.to));
     this.root.querySelectorAll<HTMLElement>('[data-port]').forEach(button => {
       const port = button.dataset.port as PortId;
       const connection = this.connections.find(c => c.from === port || c.to === port);
@@ -134,6 +137,7 @@ export class CableUI {
       button.classList.toggle('connected', !!connection);
       button.classList.toggle('selected', this.pending === port);
       button.classList.toggle('compatible', !!valid);
+      button.classList.toggle('suggested', !this.pending && port === nextCable?.from);
       button.style.setProperty('--cable-color', connection?.from === 'filter:out' ? '#a6c9d3' : '#d9b16f');
       button.setAttribute('aria-pressed', String(this.pending === port));
       button.setAttribute('aria-label', `${ports[port].label}${connection ? ', connectat; clica per desconnectar' : ', lliure'}`);

@@ -68,6 +68,29 @@ document.querySelector<HTMLButtonElement>('#run')!.addEventListener('click', asy
     const engine = new AudioEngine();
     assert(await engine.play(firstSignal.initial, 2, () => {}) === false, 'incomplete playback');
   });
+  await check('Ajustar cada knob modifica la nota sense reiniciar-la ni allargar-la', async () => {
+    for (const [key, value] of [['frequency', 440], ['cutoff', 3000], ['resonance', 5]] as const) {
+      const context = new OfflineAudioContext(1, Math.round(44100 * 0.35), 44100);
+      const voice = createVoice(context, firstSignal.target, 0.3, 0);
+      voice.update({ ...firstSignal.target.parameters, [key]: value }, 0.12);
+      const signal = (await context.startRendering()).getChannelData(0);
+      const beforeDifference = difference(target.slice(0, 4000), signal.slice(0, 4000));
+      // Adding automation can change Chromium's float processing by ~1e-7.
+      // This tolerance remains well below one 16-bit PCM quantization step.
+      assert(beforeDifference < 0.000001, `${key} changed the audio before the edit (max difference: ${beforeDifference})`);
+      assert(difference(target.slice(7000, 11000), signal.slice(7000, 11000)) > 0.001, `${key} did not update`);
+      assert(signal.slice(Math.round(0.32 * 44100)).every(n => n === 0), `${key} extended the note`);
+      assert(signal.every(Number.isFinite) && peak(signal) < 1, `${key} produced invalid audio`);
+    }
+  });
+  await check('Canviar la forma d’ona actualitza la veu existent', async () => {
+    const context = new OfflineAudioContext(1, Math.round(44100 * 0.35), 44100);
+    const voice = createVoice(context, firstSignal.target, 0.3, 0);
+    voice.update({ ...firstSignal.target.parameters, waveform: 'square' }, 0);
+    assert(voice.oscillator.type === 'square', 'waveform did not change');
+    const signal = (await context.startRendering()).getChannelData(0);
+    assert(difference(target, signal) > 0.001 && peak(signal) < 1, 'waveform output did not change');
+  });
   document.querySelector('#summary')!.textContent = `${passed} PASS / ${failed} FAIL`;
   button.disabled = false;
 });

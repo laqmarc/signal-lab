@@ -4,6 +4,7 @@ import { clonePatch, connectPorts, disconnectPort, isCompletePatch, requiredConn
 import { firstSignal } from '../src/levels/first-signal.ts';
 import { normalizeParameter, parameterAtPosition, parameterDefinitions } from '../src/modules/definitions.ts';
 import { scorePatch } from '../src/scoring/score.ts';
+import { getGuidance } from '../src/ui/guidance.ts';
 
 test('an exact complete patch earns 100%; target is not mutated', () => {
   const player = clonePatch(firstSignal.target);
@@ -93,4 +94,48 @@ test('score is always within 0–100 over the valid parameter space', () => {
       assert.ok(Number.isInteger(score) && score >= 0 && score <= 100);
     }
   }
+});
+
+test('parameter feedback gives correct directions without revealing the target values', () => {
+  const player = clonePatch(firstSignal.target);
+  player.parameters = { waveform: 'triangle', frequency: 440, cutoff: 400, resonance: 5 };
+  const { feedback } = scorePatch(player, firstSignal.target);
+  assert.deepEqual(feedback.map(f => f.direction), ['change', 'down', 'up', 'down']);
+  assert.ok(feedback.every(f => f.percent < 100));
+  assert.ok(feedback.every(f => !/220|900|2[.,]4/.test(f.instruction)));
+  assert.ok(scorePatch(firstSignal.target, firstSignal.target).feedback.every(f => f.direction === 'match' && f.percent === 100));
+});
+
+test('disconnected patches give connection guidance, not misleading parameter matches', () => {
+  const disconnected = clonePatch(firstSignal.target);
+  disconnected.connections = [];
+  assert.deepEqual(scorePatch(disconnected, firstSignal.target).feedback, []);
+  const near = clonePatch(firstSignal.target);
+  near.parameters.frequency = 221;
+  assert.equal(scorePatch(near, firstSignal.target).feedback.find(f => f.parameter === 'frequency').percent, 99);
+});
+
+test('learning guidance follows listening, both cables, audition and checking', () => {
+  const state = { heardTarget: false, heardPlayer: false, checked: false, solved: false };
+  const player = clonePatch(firstSignal.initial);
+  assert.equal(getGuidance(player, state).action, 'target');
+  state.heardTarget = true;
+  assert.match(getGuidance(player, state).text, /OUT d’OSCILLATOR/);
+  player.connections = [requiredConnections[0]];
+  assert.match(getGuidance(player, state).text, /OUT de FILTER/);
+  player.connections = [...requiredConnections];
+  assert.equal(getGuidance(player, state).action, 'player');
+  state.heardPlayer = true;
+  assert.equal(getGuidance(player, state).action, 'check');
+  state.checked = true;
+  assert.match(getGuidance(player, state).text, /Segueix les pistes/);
+  state.solved = true;
+  assert.equal(getGuidance(player, state).step, 4);
+});
+
+test('learning guidance recovers if the player connects in reverse order or disconnects later', () => {
+  const state = { heardTarget: true, heardPlayer: true, checked: false, solved: false };
+  const player = clonePatch(firstSignal.target);
+  player.connections = [requiredConnections[1]];
+  assert.match(getGuidance(player, state).text, /OUT d’OSCILLATOR/);
 });
