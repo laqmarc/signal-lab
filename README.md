@@ -37,11 +37,22 @@ Controls:
 - Teclat: Tab per navegar; fletxes per ajustar un knob; Page Up/Down per fer passos més grans; Home/End per als extrems; Enter/Espai per activar un connector.
 - Clica un connector ocupat per retirar-ne el cable. Esc cancel·la una connexió pendent.
 - Torna a prémer el botó de reproducció per aturar el so. Una nova reproducció atura l'anterior. Durant PLAY MY SOUND, els knobs i la forma d'ona actualitzen la veu existent; els valors numèrics fan una transició curta i suau. La nota continua durant els seus dos segons originals. Canviar cables atura la nota del jugador. Ajustar el patch mentre sona l'objectiu no modifica el so objectiu.
-- **Reinicia el patch** restaura els valors inicials, elimina els cables i atura l'àudio.
+- **Reinicia el patch** restaura els valors inicials, elimina els cables i atura l'àudio. Conserva el millor resultat i el fet d'haver completat el nivell.
 
 Després d'editar un patch ja avaluat, la puntuació es conserva amb l'etiqueta **RESULTAT ANTERIOR**. Les pistes antigues s'amaguen fins que tornes a prémer CHECK, per evitar confondre-les amb l'estat actual.
 
-El patch comença desconnectat. Si falta un cable, PLAY MY SOUND no emet so i CHECK dona 0%. El joc no guarda la partida; recarregar la pàgina la reinicia.
+Una partida nova comença desconnectada. Si falta un cable, PLAY MY SOUND no emet so i CHECK dona 0%.
+
+## Desat de la partida
+
+El joc desa automàticament els valors, els cables, l'últim patch comprovat, el millor resultat i els passos d'aprenentatge. Quan recarregues o tornes a obrir el joc, reprens el mateix estat **sense reproducció automàtica d'àudio**. La línia sota el resultat informa si la partida s'ha recuperat o desat.
+
+- El rècord apareix al costat del títol. Arribar al 100% hi deixa la marca de nivell completat, encara que després experimentis o reiniciïs el patch.
+- Un patch modificat després de CHECK continua mostrant **RESULTAT ANTERIOR** en recuperar-lo. Es recalcula la puntuació a partir del patch que es va comprovar, no es confia en un percentatge emmagatzemat.
+- El desat és local al navegador i a l'adreça del joc. `localhost`, `127.0.0.1` i ports diferents tenen emmagatzematges separats. No hi ha compte ni sincronització entre dispositius.
+- Si dues pestanyes desen, l'última escriptura determina el patch actual; el millor resultat es conserva. Una pestanya sense canvis pendents no sobreescriu la partida quan es tanca.
+- Si el navegador bloqueja l'emmagatzematge o no queda espai, el joc continua funcionant i mostra que els canvis no es podran recuperar en tancar.
+- Esborrar les dades del lloc al navegador elimina la partida i el rècord. Les dades invàlides o d'una revisió de nivell incompatible s'ignoren i s'inicia un patch nou.
 
 ## Arquitectura mínima
 
@@ -52,6 +63,7 @@ src/
   connections/patch.ts     Connexions permeses, desconnexió i validació del patch
   levels/first-signal.ts   Definició de l'únic nivell, patch inicial i objectiu
   scoring/score.ts         Comparació de paràmetres i pistes, sense dependències de la UI
+  progress/storage.ts      Desat versionat, validació i recuperació de la partida
   ui/lab.ts               Estat del joc, panells i interaccions
   ui/knob.ts              Control per ratolí, tacte, teclat i entrada numèrica
   ui/cables.ts            Connexions per clic/arrossegament i representació SVG
@@ -63,6 +75,8 @@ src/
 L'estat `Patch` conté els paràmetres i una llista de connexions entre ports. La UI el modifica; el motor rep una còpia per cada reproducció i actualitzacions dels paràmetres durant la nota del jugador. La puntuació el compara amb l'objectiu del nivell, que no es modifica. No s'inclou cap mòdul addicional.
 
 Per afegir mòduls més endavant cal ampliar els tipus i definicions, registrar els nodes d'àudio corresponents i definir les connexions del nou nivell. Els controls visuals, el graf d'àudio i l'avaluació es mantenen en fitxers separats.
+
+El desat utilitza `localStorage` amb una clau per nivell, versió d'esquema i revisió del nivell. Cal incrementar `Level.revision` quan un canvi d'objectiu, de puntuació o de controls faci incompatibles les partides anteriors. Abans de recuperar un patch es validen els rangs, els passos dels controls, les formes d'ona i els cables permesos. Les actualitzacions dels knobs s'agrupen durant 180 ms; CHECK, reinici i sortida de la pàgina desen els canvis pendents immediatament.
 
 ## Àudio i puntuació
 
@@ -85,9 +99,10 @@ Les quatre targetes mostren les similituds individuals abans d'aplicar els pesos
 
 ## Validació
 
-- `npm test`: 13 proves amb el runner integrat de Node. Comproven connexions invàlides, desconnexió, aïllament de l'objectiu, puntuació, límits, pistes individuals i guia d'aprenentatge, inclòs l'ordre invers de les connexions.
+- `npm test`: 25 proves amb el runner integrat de Node. Comproven connexions, puntuació, controls, pistes i guia d'aprenentatge, a més del desat i la recuperació de patches, conservació del rècord, dades invàlides, incompatibilitats de versió i errors d'emmagatzematge.
 - Amb `npm run dev` actiu, obre `/tests/audio.html` i prem **Executa les proves**: 10 proves amb `OfflineAudioContext` i el motor real, sense emetre àudio. Comproven mostres idèntiques per al mateix patch, silenci quan falten cables, diferències entre formes d'ona, efecte dels controls, absència de saturació en els casos límit a 44,1/48 kHz i final de nota. També verifiquen els canvis en viu dels knobs i la forma d'ona sense reiniciar ni allargar la nota.
 - Recorregut de UI comprovat al navegador: puntuació inicial de 0%, connexió per clic i arrossegament, knobs amb teclat i ratolí, valors numèrics, reproducció, canvi entre target/jugador, reinici i solució al 100%.
+- Persistència comprovada al navegador amb la versió compilada: recàrrega immediata després d'editar una partida parcial, restauració de pistes actuals i resultats anteriors, victòria al 100% i reinici conservant el rècord. Les proves de navegador de desat utilitzen un port separat per no modificar la partida del jugador.
 
 <details>
 <summary>Solució del nivell (per a desenvolupament)</summary>

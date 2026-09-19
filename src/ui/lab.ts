@@ -2,6 +2,7 @@ import { AudioEngine } from '../audio/engine.ts';
 import { clonePatch, isCompletePatch } from '../connections/patch.ts';
 import { firstSignal } from '../levels/first-signal.ts';
 import { moduleDefinitions, waveforms, type ParameterId, type PortId, type Waveform } from '../modules/definitions.ts';
+import { bestPatchFor, ProgressStore, samePatch } from '../progress/storage.ts';
 import { scorePatch, type ScoreResult } from '../scoring/score.ts';
 import { CableUI } from './cables.ts';
 import { getGuidance, type LearningState } from './guidance.ts';
@@ -20,11 +21,17 @@ const jackMarkup = (port: PortId) => `<div class="jack-group"><span>${port.endsW
 
 export function mountLab(root: HTMLElement): void {
   const level = firstSignal;
-  let patch = clonePatch(level.initial);
+  const progressStore = new ProgressStore(level);
+  const restored = progressStore.load();
+  let patch = restored.progress.patch;
+  let lastCheckedPatch = restored.progress.lastCheckedPatch;
+  let bestPatch = restored.progress.bestPatch;
   let playing: 'target' | 'player' | null = null;
   let request = 0;
-  let lastResult: ScoreResult | null = null;
-  const learning: LearningState = { heardTarget: false, heardPlayer: false, checked: false, solved: false };
+  let lastResult: ScoreResult | null = lastCheckedPatch ? scorePatch(lastCheckedPatch, level.target) : null;
+  const learning: LearningState = { heardTarget: restored.progress.heardTarget, heardPlayer: restored.progress.heardPlayer, checked: false, solved: false };
+  let saveTimer: number | null = null;
+  let savePending = false;
   const engine = new AudioEngine();
   const moduleMarkup = moduleDefinitions.map((module, index) => {
     const content = module.id === 'oscillator'
@@ -38,20 +45,51 @@ export function mountLab(root: HTMLElement): void {
   root.innerHTML = `<div class="app-shell">
     <header class="topbar"><a class="brand" href="./" aria-label="Signal Lab, inici"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M2 16h6l4-11 9 22 4-11h5"/></svg><span>SIGNAL<span class="brand-light">LAB</span></span></a><span class="topbar-description">UN PETIT LABORATORI DE SO</span><div class="prototype-badge"><span></span> PROTOTIP 01</div></header>
     <main>
-      <div class="level-intro"><div><p class="eyebrow">EXPERIMENT 001 <span>/</span> EL PRIMER PATCH</p><h1>${level.title}<span>.</span></h1><p class="intro-description">${level.description}</p></div><div class="level-tag"><span class="tiny-grid" aria-hidden="true">▦</span> NIVELL 01 <span>/ 01</span></div></div>
+      <div class="level-intro"><div><p class="eyebrow">EXPERIMENT 001 <span>/</span> EL PRIMER PATCH</p><h1>${level.title}<span>.</span></h1><p class="intro-description">${level.description}</p></div><div class="level-meta"><div class="level-tag"><span class="tiny-grid" aria-hidden="true">▦</span> NIVELL 01 <span>/ 01</span></div><p id="best-score" class="personal-best"></p></div></div>
       <section class="target-card" aria-label="So objectiu"><div class="target-label"><span class="target-symbol" aria-hidden="true">◎</span><div><span class="eyebrow">EL TEU OBJECTIU</span><h2>Escolta. I torna'l a crear.</h2><p>Pots escoltar-lo tantes vegades com vulguis.</p></div></div><div class="target-wave" aria-hidden="true">${Array.from({length: 39}, (_, i) => `<i style="--h:${8 + Math.abs(Math.sin(i * 1.9)) * (Math.sin(i / 38 * Math.PI) * 32)}px;--delay:${i * 25}ms"></i>`).join('')}</div><button id="play-target" class="button target-button">${playIcon}<span>PLAY TARGET</span><small>02 s</small></button></section>
       <div class="workbench-heading"><h2>El teu laboratori</h2><span><i class="status-dot"></i><span id="connection-count">0 / 2 CABLES</span></span></div>
       <ol class="steps"><li data-step="1"><b>1</b><span><strong>Connecta</strong> els connectors amb cables.</span></li><li data-step="2"><b>2</b><span><strong>Ajusta</strong> els knobs i escolta.</span></li><li data-step="3"><b>3</b><span><strong>Compara</strong> el so amb l’objectiu.</span></li></ol>
       <p class="learning-guide" id="learning-guide" role="status"></p>
       <div class="rack" id="rack"><div class="rack-rail rail-top" aria-hidden="true"></div><div class="modules">${moduleMarkup}</div><svg class="cables" aria-hidden="true"></svg><div class="rack-rail rail-bottom" aria-hidden="true"></div><div class="rack-caption" aria-hidden="true"><span>SL–01</span><span>MODULAR SOUND LABORATORY</span><span>●</span></div></div>
       <div class="cable-instructions"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 4v5a6 6 0 0 0 12 0V4M2 3h4M14 3h4"/></svg><p id="connection-help" role="status">Clica OUT i després IN, o arrossega un cable. Clica un connector ocupat per desconnectar.</p></div>
-      <div class="transport"><button class="reset-button" id="reset"><span aria-hidden="true">↺</span> Reinicia el patch</button><p class="transport-note" id="patch-status"><span class="status-dot"></span> El so necessita un camí.</p><div class="transport-actions"><button id="play-player" class="button player-button">${playIcon}<span>PLAY MY SOUND</span></button><button id="check" class="button check-button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 10 4 4 8-8"/></svg> CHECK</button></div></div>
+      <div class="transport"><button class="reset-button" id="reset" title="Restaura els controls i els cables. Conserva el millor resultat."><span aria-hidden="true">↺</span> Reinicia el patch</button><p class="transport-note" id="patch-status"><span class="status-dot"></span> El so necessita un camí.</p><div class="transport-actions"><button id="play-player" class="button player-button">${playIcon}<span>PLAY MY SOUND</span></button><button id="check" class="button check-button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 10 4 4 8-8"/></svg> CHECK</button></div></div>
       <section id="result" class="result" aria-label="Resultat de la comparació"><div class="result-overview"><div class="score-block"><span class="eyebrow" id="score-label">COINCIDÈNCIA</span><div><strong id="score">—</strong><span>%</span></div></div><div class="result-content"><h3 id="result-title">Cada ajust et porta més a prop.</h3><p id="result-hint">Escolta l’objectiu, construeix el teu so i prem CHECK.</p><div class="score-track"><div id="score-fill"></div></div></div><div class="result-stamp" id="result-stamp" aria-hidden="true">◎</div></div><div class="parameter-feedback" id="parameter-feedback" aria-label="Pistes per paràmetre" hidden></div></section><p class="sr-only" id="result-announcement" role="status" aria-live="polite"></p>
+      <p class="save-status" id="save-status"></p>
     </main><footer class="footer"><span>ESCOLTA. CONNECTA. DESCOBREIX.</span><span>Arrossega els knobs ↕ <span class="footer-separator">/</span> Shift per afinar <span class="footer-separator">/</span> També pots escriure els valors</span></footer>
   </div>`;
 
   const get = <T extends HTMLElement = HTMLElement>(selector: string) => root.querySelector<T>(selector)!;
   const setHelp = (message: string) => { get('#connection-help').textContent = message; };
+  const updateBest = () => {
+    const bestScore = bestPatch ? scorePatch(bestPatch, level.target).score : null;
+    get('#best-score').textContent = bestScore === 100 ? '✓ Nivell completat · millor 100%' : bestScore === null ? 'Millor resultat: —' : `Millor resultat: ${bestScore}%`;
+    get('#best-score').classList.toggle('completed', bestScore === 100);
+  };
+  const setSaveStatus = (text: string, unavailable = false) => {
+    get('#save-status').textContent = text;
+    get('#save-status').classList.toggle('save-unavailable', unavailable);
+  };
+  const flushProgress = () => {
+    if (!savePending) return;
+    if (saveTimer !== null) window.clearTimeout(saveTimer);
+    saveTimer = null;
+    savePending = false;
+    const result = progressStore.save({ patch, lastCheckedPatch, bestPatch, heardTarget: learning.heardTarget, heardPlayer: learning.heardPlayer });
+    if (result.saved) {
+      bestPatch = result.bestPatch;
+      updateBest();
+      setSaveStatus('Partida desada en aquest navegador. Pots tornar-hi quan vulguis.');
+    } else setSaveStatus('El navegador no permet desar. Pots jugar, però els canvis es perdran en tancar.', true);
+  };
+  const saveProgress = (immediate = false) => {
+    savePending = true;
+    if (saveTimer !== null) window.clearTimeout(saveTimer);
+    if (immediate) flushProgress();
+    else {
+      setSaveStatus('Desant la partida…');
+      saveTimer = window.setTimeout(flushProgress, 180);
+    }
+  };
   const updateGuidance = () => {
     const guide = getGuidance(patch, learning);
     get('#learning-guide').textContent = guide.text;
@@ -77,38 +115,49 @@ export function mountLab(root: HTMLElement): void {
     get('#signal-caption').textContent = state === 'player' ? 'PLAYING' : isCompletePatch(patch) ? 'READY' : 'NO INPUT';
   };
   const stop = () => { request++; engine.stop(); setPlayback(null); };
-  const clearResult = () => {
-    lastResult = null;
-    learning.checked = false;
-    learning.solved = false;
+  const renderResult = (announce = false) => {
+    const fresh = lastCheckedPatch !== null && samePatch(patch, lastCheckedPatch);
+    learning.checked = fresh && !!lastResult?.complete;
+    learning.solved = fresh && !!lastResult?.solved;
     get('#result').classList.remove('solved', 'stale');
     get('#score-label').textContent = 'COINCIDÈNCIA';
+    get('#result-announcement').textContent = '';
+    get('#parameter-feedback').hidden = true;
+    get('#parameter-feedback').replaceChildren();
+    if (lastResult) {
+      get('#score').textContent = String(lastResult.score);
+      get('#score-fill').style.width = `${lastResult.score}%`;
+      if (!fresh) {
+        get('#result').classList.add('stale');
+        get('#score-label').textContent = 'RESULTAT ANTERIOR';
+        get('#result-title').textContent = 'Has ajustat el patch.';
+        get('#result-hint').textContent = 'Aquesta puntuació és de l’última comprovació. Prem CHECK per valorar els canvis.';
+        get('#result-stamp').textContent = '↻';
+        return;
+      }
+      get('#result-title').textContent = lastResult.solved ? 'Experiment completat.' : !lastResult.complete ? 'Primer, connecta les màquines.' : lastResult.score >= 80 ? 'Ja gairebé el tens.' : 'El so comença a prendre forma.';
+      get('#result-hint').textContent = lastResult.hint;
+      get('#result').classList.toggle('solved', lastResult.solved);
+      get('#result-stamp').textContent = lastResult.solved ? '✓' : '◎';
+      if (announce) get('#result-announcement').textContent = `${lastResult.score}%. ${lastResult.hint}`;
+      const icons = { match: '✓', change: '↔', up: '↑', down: '↓' };
+      get('#parameter-feedback').innerHTML = lastResult.feedback.map(item => `<div class="feedback-item ${item.direction === 'match' ? 'feedback-match' : ''}"><div class="feedback-title"><strong>${item.label}</strong><span>${item.percent}%</span></div><span class="feedback-control">${item.control}</span><div class="feedback-meter" aria-hidden="true"><i style="width:${item.percent}%"></i></div><p><span aria-hidden="true">${icons[item.direction]}</span> ${item.instruction}</p></div>`).join('');
+      get('#parameter-feedback').hidden = !lastResult.complete;
+      return;
+    }
     get('#score').textContent = '—';
     get('#score-fill').style.width = '0%';
     get('#result-title').textContent = 'Cada ajust et porta més a prop.';
     get('#result-hint').textContent = 'Prem CHECK per comparar el patch actual amb l’objectiu.';
     get('#result-stamp').textContent = '◎';
-    get('#result-announcement').textContent = '';
-    get('#parameter-feedback').hidden = true;
-    get('#parameter-feedback').replaceChildren();
   };
   const changed = (topology = false) => {
     if (topology && playing === 'player') stop();
     else if (playing === 'player') engine.updateParameters(patch.parameters);
     learning.heardPlayer = playing === 'player';
-    learning.checked = false;
-    learning.solved = false;
-    if (lastResult) {
-      get('#result').classList.remove('solved');
-      get('#result').classList.add('stale');
-      get('#score-label').textContent = 'RESULTAT ANTERIOR';
-      get('#result-title').textContent = 'Has ajustat el patch.';
-      get('#result-hint').textContent = 'Aquesta puntuació és de l’última comprovació. Prem CHECK per valorar els canvis.';
-      get('#result-stamp').textContent = '↻';
-      get('#parameter-feedback').hidden = true;
-      get('#result-announcement').textContent = '';
-    }
+    renderResult();
     updateGuidance();
+    saveProgress();
   };
   const updateConnections = () => {
     const complete = isCompletePatch(patch);
@@ -152,6 +201,7 @@ export function mountLab(root: HTMLElement): void {
         if (kind === 'target') learning.heardTarget = true;
         else learning.heardPlayer = true;
         updateGuidance();
+        saveProgress(true);
       }
     } catch {
       if (current !== request) return;
@@ -162,36 +212,36 @@ export function mountLab(root: HTMLElement): void {
   get('#play-target').addEventListener('click', () => { void play('target'); });
   get('#play-player').addEventListener('click', () => { void play('player'); });
   get('#check').addEventListener('click', () => {
-    const result = scorePatch(patch, level.target);
-    lastResult = result;
-    learning.checked = result.complete;
-    learning.solved = result.solved;
-    get('#result').classList.remove('stale');
-    get('#score-label').textContent = 'COINCIDÈNCIA';
-    get('#score').textContent = String(result.score);
-    get('#score-fill').style.width = `${result.score}%`;
-    get('#result-title').textContent = result.solved ? 'Experiment completat.' : !result.complete ? 'Primer, connecta les màquines.' : result.score >= 80 ? 'Ja gairebé el tens.' : 'El so comença a prendre forma.';
-    get('#result-hint').textContent = result.hint;
-    get('#result').classList.toggle('solved', result.solved);
-    get('#result-stamp').textContent = result.solved ? '✓' : '◎';
-    get('#result-announcement').textContent = `${result.score}%. ${result.hint}`;
-    const icons = { match: '✓', change: '↔', up: '↑', down: '↓' };
-    get('#parameter-feedback').innerHTML = result.feedback.map(item => `<div class="feedback-item ${item.direction === 'match' ? 'feedback-match' : ''}"><div class="feedback-title"><strong>${item.label}</strong><span>${item.percent}%</span></div><span class="feedback-control">${item.control}</span><div class="feedback-meter" aria-hidden="true"><i style="width:${item.percent}%"></i></div><p><span aria-hidden="true">${icons[item.direction]}</span> ${item.instruction}</p></div>`).join('');
-    get('#parameter-feedback').hidden = !result.complete;
+    lastCheckedPatch = clonePatch(patch);
+    lastResult = scorePatch(lastCheckedPatch, level.target);
+    bestPatch = bestPatchFor(level, bestPatch, lastCheckedPatch);
+    renderResult(true);
+    updateBest();
     updateGuidance();
+    saveProgress(true);
   });
   get('#reset').addEventListener('click', () => {
     stop();
     patch = clonePatch(level.initial);
     learning.heardPlayer = false;
+    lastCheckedPatch = null;
+    lastResult = null;
     cables.setConnections(patch.connections);
     knobSetters.forEach(({ id, set }) => set(patch.parameters[id]));
-    updateWaveform(); updateConnections(); clearResult();
-    setHelp('Patch reiniciat. Clica OUT i després IN, o arrossega un cable.');
+    updateWaveform(); updateConnections(); renderResult();
+    setHelp('Patch reiniciat. El millor resultat es conserva. Clica OUT i després IN per connectar.');
     updateGuidance();
+    saveProgress(true);
   });
-  document.addEventListener('visibilitychange', () => { if (document.hidden) stop(); });
-  window.addEventListener('pagehide', stop);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) { stop(); flushProgress(); } });
+  window.addEventListener('pagehide', () => { stop(); flushProgress(); });
+  cables.setConnections(patch.connections);
+  renderResult();
+  updateBest();
   updateConnections();
   updateGuidance();
+  if (restored.status === 'restored') setSaveStatus('Partida recuperada. El desat automàtic està actiu.');
+  else if (restored.status === 'unavailable') setSaveStatus('El navegador no permet desar. Pots jugar, però els canvis es perdran en tancar.', true);
+  else if (restored.status === 'invalid') setSaveStatus('La partida desada no és compatible. Comencem un patch nou.');
+  else setSaveStatus('Desat automàtic en aquest navegador.');
 }
