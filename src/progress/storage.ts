@@ -1,6 +1,6 @@
-import { clonePatch, requiredConnections } from '../connections/patch.ts';
+import { clonePatch, routesForPatch } from '../connections/patch.ts';
 import type { Level } from '../levels/first-signal.ts';
-import { normalizeParameter, parameterDefinitions, waveforms, type ParameterId, type Patch, type Waveform } from '../modules/definitions.ts';
+import { modulesForPatch, normalizeParameter, parameterIdsForPatch, parameterValue, waveforms, type ParameterId, type Patch, type Waveform } from '../modules/definitions.ts';
 import { scorePatch } from '../scoring/score.ts';
 
 export interface Progress {
@@ -21,8 +21,9 @@ export function initialProgress(level: Level): Progress {
 }
 
 export function samePatch(a: Patch, b: Patch): boolean {
-  return a.parameters.waveform === b.parameters.waveform
-    && (Object.keys(parameterDefinitions) as ParameterId[]).every(id => a.parameters[id] === b.parameters[id])
+  return modulesForPatch(a).join(',') === modulesForPatch(b).join(',')
+    && (!modulesForPatch(a).includes('oscillator') || a.parameters.waveform === b.parameters.waveform)
+    && parameterIdsForPatch(a).every(id => parameterValue(a.parameters, id) === parameterValue(b.parameters, id))
     && a.connections.length === b.connections.length
     && a.connections.every(c => b.connections.some(other => c.from === other.from && c.to === other.to));
 }
@@ -36,13 +37,17 @@ export function bestPatchFor(level: Level, ...patches: (Patch | null)[]): Patch 
 }
 
 // Browser storage is untrusted: only restore exact supported values and routes.
-function parsePatch(value: unknown): Patch | null {
+function parsePatch(value: unknown, level: Level): Patch | null {
   if (!isRecord(value) || !isRecord(value.parameters) || !Array.isArray(value.connections)) return null;
   const p = value.parameters;
+  const modules = value.modules === undefined ? modulesForPatch({ parameters: level.initial.parameters, connections: [] }) : value.modules;
+  if (!Array.isArray(modules) || modules.some(id => typeof id !== 'string') || modules.join(',') !== modulesForPatch(level.target).join(',')) return null;
   if (!waveforms.includes(p.waveform as Waveform)) return null;
-  for (const id of Object.keys(parameterDefinitions) as ParameterId[]) {
+  const numericIds = [...new Set<ParameterId>(['frequency', 'cutoff', 'resonance', ...parameterIdsForPatch(level.target)])];
+  for (const id of numericIds) {
     if (typeof p[id] !== 'number' || !Number.isFinite(p[id]) || normalizeParameter(id, p[id]) !== p[id]) return null;
   }
+  const requiredConnections = routesForPatch(level.target);
   if (value.connections.length > requiredConnections.length) return null;
   const connections: Patch['connections'] = [];
   for (const cable of value.connections) {
@@ -51,7 +56,9 @@ function parsePatch(value: unknown): Patch | null {
     if (!valid || connections.some(c => c.from === valid.from)) return null;
     connections.push({ ...valid });
   }
-  return { parameters: { waveform: p.waveform as Waveform, frequency: p.frequency as number, cutoff: p.cutoff as number, resonance: p.resonance as number }, connections };
+  const parameters: Patch['parameters'] = { waveform: p.waveform as Waveform, frequency: p.frequency as number, cutoff: p.cutoff as number, resonance: p.resonance as number };
+  for (const id of numericIds) parameters[id] = p[id] as number;
+  return { parameters, connections, ...(value.modules === undefined ? {} : { modules: [...modulesForPatch(level.target)] }) };
 }
 
 function parseProgress(raw: string, level: Level): Progress | null {
@@ -59,9 +66,9 @@ function parseProgress(raw: string, level: Level): Progress | null {
   try { saved = JSON.parse(raw); } catch { return null; }
   if (!isRecord(saved) || saved.schemaVersion !== schemaVersion || saved.levelId !== level.id || saved.levelRevision !== level.revision) return null;
   if (typeof saved.heardTarget !== 'boolean' || typeof saved.heardPlayer !== 'boolean') return null;
-  const patch = parsePatch(saved.patch);
-  const lastCheckedPatch = saved.lastCheckedPatch === null ? null : parsePatch(saved.lastCheckedPatch);
-  const bestPatch = saved.bestPatch === null ? null : parsePatch(saved.bestPatch);
+  const patch = parsePatch(saved.patch, level);
+  const lastCheckedPatch = saved.lastCheckedPatch === null ? null : parsePatch(saved.lastCheckedPatch, level);
+  const bestPatch = saved.bestPatch === null ? null : parsePatch(saved.bestPatch, level);
   if (!patch || (saved.lastCheckedPatch !== null && !lastCheckedPatch) || (saved.bestPatch !== null && !bestPatch)) return null;
   return { patch, lastCheckedPatch, bestPatch: bestPatchFor(level, bestPatch, lastCheckedPatch), heardTarget: saved.heardTarget, heardPlayer: saved.heardPlayer };
 }

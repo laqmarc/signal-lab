@@ -1,5 +1,7 @@
 import { AudioEngine, createVoice } from '../src/audio/engine.ts';
 import { clonePatch, requiredConnections } from '../src/connections/patch.ts';
+import { levels } from '../src/levels/catalog.ts';
+import { parameterIdsForPatch, parameterDefinitions, parameterValue } from '../src/modules/definitions.ts';
 import { firstSignal } from '../src/levels/first-signal.ts';
 import { type Patch, waveforms } from '../src/modules/definitions.ts';
 
@@ -90,6 +92,64 @@ document.querySelector<HTMLButtonElement>('#run')!.addEventListener('click', asy
     assert(voice.oscillator.type === 'square', 'waveform did not change');
     const signal = (await context.startRendering()).getChannelData(0);
     assert(difference(target, signal) > 0.001 && peak(signal) < 1, 'waveform output did not change');
+  });
+  const renderLevel = async (patch: Patch, duration: number) => {
+    const context = new OfflineAudioContext(1, Math.ceil(22050 * (duration + 0.1)), 22050);
+    createVoice(context, patch, duration, 0);
+    return (await context.startRendering()).getChannelData(0);
+  };
+  await check('Els 24 objectius són audibles, finits, sense saturació i acaben en silenci', async () => {
+    for (const level of levels) {
+      const signal = await renderLevel(level.target, level.duration);
+      assert(signal.every(Number.isFinite) && peak(signal) > 0.001 && peak(signal) < 1, level.id);
+      assert(peak(signal.slice(Math.ceil((level.duration + 0.03) * 22050))) === 0, `${level.id} leaves a tail`);
+    }
+  });
+  await check('Noise, reverb i totes les combinacions són reproduïbles mostra a mostra', async () => {
+    for (const level of levels.slice(4)) {
+      const a = await renderLevel(level.target, level.duration);
+      const b = await renderLevel(clonePatch(level.target), level.duration);
+      assert(difference(a, b) < 0.000001, `${level.id}: ${difference(a, b)}`);
+    }
+  });
+  await check('Cada control nou modifica realment les mostres del seu nivell', async () => {
+    const checked = new Set<string>(['frequency', 'cutoff', 'resonance']);
+    for (const level of levels) for (const id of parameterIdsForPatch(level.target)) {
+      if (checked.has(id)) continue;
+      checked.add(id);
+      const patch = clonePatch(level.target), def = parameterDefinitions[id];
+      patch.parameters[id] = parameterValue(patch.parameters, id) === def.max ? def.min : def.max;
+      const a = await renderLevel(level.target, level.duration), b = await renderLevel(patch, level.duration);
+      assert(difference(a, b) > 0.00001, `${id} has no audible effect`);
+    }
+    assert(checked.size === Object.keys(parameterDefinitions).length, 'a control was not checked');
+  });
+  await check('El motor bloqueja també els cables de control incomplets', async () => {
+    for (const level of levels.filter(l => l.target.connections.some(c => c.to === 'filter:mod' || c.to === 'oscillator:pitch'))) {
+      for (const cable of level.target.connections) {
+        const patch = clonePatch(level.target); patch.connections = patch.connections.filter(c => c !== patch.connections.find(p => p.from === cable.from));
+        const engine = new AudioEngine();
+        assert(await engine.play(patch, level.duration, () => {}) === false, level.id);
+        engine.dispose();
+      }
+    }
+  });
+  await check('El final de les veus en viu notifica un cop; aturar o disposar cancel·la les notificacions', async () => {
+    const engine = new AudioEngine();
+    let count = 0;
+    try {
+      await engine.play(levels[6].target, 0.15, () => { count++; });
+      await new Promise(resolve => setTimeout(resolve, 300));
+      assert(count === 1, `noise ended ${count} times`);
+      await engine.play(levels[8].target, 1, () => { count++; });
+      engine.stop();
+      await new Promise(resolve => setTimeout(resolve, 60));
+      assert(count === 1, 'stop invoked completion');
+      await engine.play(levels[16].target, 1, () => { count++; });
+      engine.dispose();
+      await new Promise(resolve => setTimeout(resolve, 60));
+      assert(count === 1, 'dispose invoked completion');
+    } finally { engine.dispose(); }
   });
   document.querySelector('#summary')!.textContent = `${passed} PASS / ${failed} FAIL`;
   button.disabled = false;

@@ -4,6 +4,8 @@ import type { Patch } from '../modules/definitions.ts';
 export interface Level {
   id: string;
   revision: number;
+  chapter?: string;
+  lesson?: string;
   title: string;
   description: string;
   duration: number;
@@ -14,6 +16,8 @@ export interface Level {
 export const firstSignal: Level = {
   id: 'first-signal',
   revision: 1,
+  chapter: '01 · Els fonaments',
+  lesson: 'Comença connectant les tres màquines. Troba la forma d’ona i després afina el to i el filtre.',
   title: 'Primera freqüència',
   description: 'Un so misteriós. Tres màquines. Troba la connexió.',
   duration: 2,

@@ -5,6 +5,9 @@ interface Point { x: number; y: number }
 const svgNS = 'http://www.w3.org/2000/svg';
 
 export class CableUI {
+  private lifecycle = new AbortController();
+  private observer: ResizeObserver;
+  private routes: readonly Connection[];
   private root: HTMLElement;
   private svg: SVGSVGElement;
   private connections: Connection[] = [];
@@ -13,7 +16,8 @@ export class CableUI {
   private onChange: (connections: Connection[]) => void;
   private announce: (message: string) => void;
 
-  constructor(root: HTMLElement, onChange: (connections: Connection[]) => void, announce: (message: string) => void) {
+  constructor(root: HTMLElement, onChange: (connections: Connection[]) => void, announce: (message: string) => void, routes = requiredConnections) {
+    this.routes = routes;
     this.root = root;
     this.svg = root.querySelector<SVGSVGElement>('.cables')!;
     this.onChange = onChange;
@@ -34,7 +38,8 @@ export class CableUI {
         if (event.button === 0) drag = { port, x: event.clientX, y: event.clientY, moved: false, pointer: event.pointerId };
       });
     });
-    window.addEventListener('pointermove', event => {
+    const listen = <K extends keyof WindowEventMap>(name: K, handler: (event: WindowEventMap[K]) => void) => window.addEventListener(name, handler, { signal: this.lifecycle.signal });
+    listen('pointermove', event => {
       if (!drag || drag.pointer !== event.pointerId) return;
       if (!drag.moved && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 6) return;
       drag.moved = true;
@@ -43,7 +48,7 @@ export class CableUI {
       this.cursor = { x: event.clientX - rect.left, y: event.clientY - rect.top };
       this.draw();
     });
-    window.addEventListener('pointerup', event => {
+    listen('pointerup', event => {
       if (!drag || drag.pointer !== event.pointerId) return;
       if (drag.moved) {
         suppressClick = true;
@@ -54,10 +59,13 @@ export class CableUI {
       }
       drag = null;
     });
-    window.addEventListener('pointercancel', () => { drag = null; this.cancel(); });
-    window.addEventListener('keydown', event => { if (event.key === 'Escape') { drag = null; this.cancel(); } });
-    new ResizeObserver(() => this.draw()).observe(root);
+    listen('pointercancel', () => { drag = null; this.cancel(); });
+    listen('keydown', event => { if (event.key === 'Escape') { drag = null; this.cancel(); } });
+    this.observer = new ResizeObserver(() => this.draw());
+    this.observer.observe(root);
   }
+
+  dispose(): void { this.lifecycle.abort(); this.observer.disconnect(); }
 
   setConnections(connections: Connection[]): void {
     this.connections = connections;
@@ -83,14 +91,14 @@ export class CableUI {
 
   private finish(port: PortId): void {
     if (!this.pending || port === this.pending) { this.cancel(); return; }
-    const next = connectPorts(this.connections, this.pending, port);
+    const next = connectPorts(this.connections, this.pending, port, this.routes);
     if (!next) {
       this.cancel();
-      this.announce('Aquesta connexió no és vàlida. Uneix OSC OUT amb FILTER IN, o FILTER OUT amb OUTPUT IN.');
+      this.announce('Aquesta connexió no és vàlida. Tria el connector il·luminat; els cables violetes van a MOD o PITCH.');
       return;
     }
     this.commit(next);
-    this.announce(next.length === 2 ? 'Circuit complet. Ja pots escoltar el teu so.' : 'Primer cable connectat. Completa el camí fins a OUTPUT.');
+    this.announce(next.length === this.routes.length ? 'Circuit complet. Ja pots escoltar el teu so.' : 'Cable connectat. Continua pels connectors il·luminats.');
   }
 
   private commit(connections: Connection[]): void {
@@ -108,7 +116,7 @@ export class CableUI {
     const path = document.createElementNS(svgNS, 'path');
     const sag = Math.min(90, Math.max(48, Math.abs(to.x - from.x) * 0.3));
     const d = Math.abs(to.y - from.y) > 130
-      ? `M ${from.x} ${from.y} C ${from.x + 80} ${from.y + 90}, ${to.x + 80} ${to.y - 90}, ${to.x} ${to.y}`
+      ? `M ${from.x} ${from.y} Q ${from.x} ${from.y + 42}, ${from.x - 24} ${from.y + 42} L 8 ${from.y + 42} L 8 ${to.y + 42} L ${to.x - 24} ${to.y + 42} Q ${to.x} ${to.y + 42}, ${to.x} ${to.y}`
       : `M ${from.x} ${from.y} C ${from.x} ${from.y + sag}, ${to.x} ${to.y + sag}, ${to.x} ${to.y}`;
     path.setAttribute('d', d);
     path.setAttribute('class', preview ? 'cable cable-preview' : 'cable cable-shadow');
@@ -129,20 +137,20 @@ export class CableUI {
   private draw(): void {
     this.svg.replaceChildren();
     this.svg.setAttribute('viewBox', `0 0 ${this.root.clientWidth} ${this.root.clientHeight}`);
-    const nextCable = requiredConnections.find(required => !this.connections.some(c => c.from === required.from && c.to === required.to));
+    const nextCable = this.routes.find(required => !this.connections.some(c => c.from === required.from && c.to === required.to));
     this.root.querySelectorAll<HTMLElement>('[data-port]').forEach(button => {
       const port = button.dataset.port as PortId;
       const connection = this.connections.find(c => c.from === port || c.to === port);
-      const valid = this.pending && port !== this.pending && connectPorts(this.connections, this.pending, port) !== null;
+      const valid = this.pending && port !== this.pending && connectPorts(this.connections, this.pending, port, this.routes) !== null;
       button.classList.toggle('connected', !!connection);
       button.classList.toggle('selected', this.pending === port);
       button.classList.toggle('compatible', !!valid);
       button.classList.toggle('suggested', !this.pending && port === nextCable?.from);
-      button.style.setProperty('--cable-color', connection?.from === 'filter:out' ? '#a6c9d3' : '#d9b16f');
+      button.style.setProperty('--cable-color', connection && ports[connection.from].kind === 'control' ? '#b6a1dc' : connection?.from === 'filter:out' ? '#a6c9d3' : '#d9b16f');
       button.setAttribute('aria-pressed', String(this.pending === port));
       button.setAttribute('aria-label', `${ports[port].label}${connection ? ', connectat; clica per desconnectar' : ', lliure'}`);
     });
-    for (const c of this.connections) this.path(this.point(c.from), this.point(c.to), c.from === 'filter:out' ? '#a6c9d3' : '#d9b16f');
+    for (const c of this.connections) this.path(this.point(c.from), this.point(c.to), ports[c.from].kind === 'control' ? '#b6a1dc' : c.from === 'filter:out' ? '#a6c9d3' : '#d9b16f');
     if (this.pending && this.cursor) this.path(this.point(this.pending), this.cursor, '#d0e9a4', true);
   }
 }

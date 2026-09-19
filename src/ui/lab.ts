@@ -1,7 +1,8 @@
 import { AudioEngine } from '../audio/engine.ts';
-import { clonePatch, isCompletePatch } from '../connections/patch.ts';
-import { firstSignal } from '../levels/first-signal.ts';
-import { moduleDefinitions, waveforms, type ParameterId, type PortId, type Waveform } from '../modules/definitions.ts';
+import { clonePatch, isCompletePatch, routesForPatch } from '../connections/patch.ts';
+import { type Level } from '../levels/first-signal.ts';
+import { levels, rememberedLevel } from '../levels/catalog.ts';
+import { moduleDefinition, modulesForPatch, parameterIdsForPatch, parameterValue, ports, waveforms, type PortId, type Waveform } from '../modules/definitions.ts';
 import { bestPatchFor, ProgressStore, samePatch } from '../progress/storage.ts';
 import { scorePatch, type ScoreResult } from '../scoring/score.ts';
 import { CableUI } from './cables.ts';
@@ -17,10 +18,13 @@ const wavePaths: Record<Waveform, string> = {
 };
 const waveHints: Record<Waveform, string> = { sine: 'Sine · suau i pur', square: 'Square · buit i electrònic', sawtooth: 'Sawtooth · brillant i aspre', triangle: 'Triangle · suau i càlid' };
 const waveSvg = (wave: Waveform) => `<svg viewBox="0 0 58 32" aria-hidden="true"><path d="${wavePaths[wave]}"/></svg>`;
-const jackMarkup = (port: PortId) => `<div class="jack-group"><span>${port.endsWith(':out') ? 'OUT' : 'IN'}</span><button class="jack" data-port="${port}" type="button"><span></span></button></div>`;
+const jackMarkup = (port: PortId) => `<div class="jack-group ${ports[port].kind === 'control' ? 'control-jack' : ''}"><span>${port.split(':')[1].toUpperCase()}</span><button class="jack" data-port="${port}" type="button"><span></span></button></div>`;
 
-export function mountLab(root: HTMLElement): void {
-  const level = firstSignal;
+export function mountLab(root: HTMLElement, level: Level = rememberedLevel()): void {
+  document.title = `Signal Lab — ${level.title}`;
+  const index = levels.indexOf(level);
+  const routes = routesForPatch(level.target);
+  const lifecycle = new AbortController();
   const progressStore = new ProgressStore(level);
   const restored = progressStore.load();
   let patch = restored.progress.patch;
@@ -33,37 +37,56 @@ export function mountLab(root: HTMLElement): void {
   let saveTimer: number | null = null;
   let savePending = false;
   const engine = new AudioEngine();
-  const moduleMarkup = moduleDefinitions.map((module, index) => {
+  const moduleMarkup = modulesForPatch(patch).map((id, index) => {
+    const module = moduleDefinition(id);
     const content = module.id === 'oscillator'
       ? `<div class="wave-selector" role="group" aria-label="Forma d’ona">${waveforms.map(w => `<button type="button" class="wave-button" data-wave="${w}" aria-label="${w}" aria-pressed="${w === patch.parameters.waveform}">${waveSvg(w)}<span>${w}</span></button>`).join('')}</div><p id="wave-hint" class="wave-hint">${waveHints[patch.parameters.waveform]}</p><div class="osc-knob">${knobMarkup('frequency', patch.parameters.frequency)}</div>`
       : module.id === 'filter'
         ? `<div class="filter-type"><span class="mini-led"></span> LOW PASS <span class="filter-line"><svg viewBox="0 0 72 25" aria-hidden="true"><path d="M1 6h29c13 0 16 3 20 12l4 5h17"/></svg></span></div><div class="filter-knobs">${knobMarkup('cutoff', patch.parameters.cutoff)}${knobMarkup('resonance', patch.parameters.resonance)}</div><p class="filter-note">Deixa passar els greus.<br/>Suavitza els aguts.</p>`
+        : module.id !== 'output' ? `<div class="machine-knobs ${module.id === 'sequencer' ? 'sequence-knobs' : ''}">${module.parameters.map(id => knobMarkup(id, parameterValue(patch.parameters, id))).join('')}</div><p class="machine-lesson">${module.lesson}</p>`
         : `<div class="output-display"><div class="display-heading"><span>SIGNAL</span><span id="signal-caption">NO INPUT</span></div><div class="signal-trace" aria-hidden="true"><svg viewBox="0 0 220 65"><path class="trace-idle" d="M0 33h220"/><path class="trace-active" d="M0 33h18l7-8 9 18 12-33 15 45 15-40 15 29 12-17 9 6h16l8-16 12 32 13-41 13 41 10-30 9 14h27"/></svg></div><div class="meter" aria-hidden="true">${'<i></i>'.repeat(18)}</div></div><div class="speaker" aria-hidden="true"><div class="speaker-center"></div></div><p class="output-note">Aquí arriba el teu so.</p>`;
-    return `<section class="module module-${module.id}" aria-labelledby="title-${module.id}"><i class="screw screw-tl" aria-hidden="true"></i><i class="screw screw-tr" aria-hidden="true"></i><i class="screw screw-bl" aria-hidden="true"></i><i class="screw screw-br" aria-hidden="true"></i><header class="module-header"><div><span class="module-number">0${index + 1} / ${module.id === 'oscillator' ? 'SOURCE' : module.id === 'filter' ? 'SHAPE' : 'LISTEN'}</span><h2 id="title-${module.id}">${module.title}</h2><p>${module.description}</p></div><span class="module-led" data-led="${module.id}" aria-hidden="true"></span></header><div class="module-body">${content}</div><div class="patch-bay">${module.ports.map(jackMarkup).join('')}<span class="bay-label">${module.id === 'oscillator' ? 'AUDIO SOURCE' : module.id === 'filter' ? 'AUDIO PROCESSOR' : 'AUDIO OUTPUT'}</span></div></section>`;
+    return `<section class="module module-${module.id}" aria-labelledby="title-${module.id}"><i class="screw screw-tl" aria-hidden="true"></i><i class="screw screw-tr" aria-hidden="true"></i><i class="screw screw-bl" aria-hidden="true"></i><i class="screw screw-br" aria-hidden="true"></i><header class="module-header"><div><span class="module-number">0${index + 1} / ${module.category}</span><h2 id="title-${module.id}">${module.title}</h2><p>${module.description}</p></div><span class="module-led" data-led="${module.id}" aria-hidden="true"></span></header><div class="module-body">${content}</div><div class="patch-bay">${[...new Set(routes.flatMap(route => [route.from, route.to]))].filter(port => ports[port].module === module.id).map(jackMarkup).join('')}<span class="bay-label">${module.category}</span></div></section>`;
   }).join('');
 
   root.innerHTML = `<div class="app-shell">
-    <header class="topbar"><a class="brand" href="./" aria-label="Signal Lab, inici"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M2 16h6l4-11 9 22 4-11h5"/></svg><span>SIGNAL<span class="brand-light">LAB</span></span></a><span class="topbar-description">UN PETIT LABORATORI DE SO</span><div class="prototype-badge"><span></span> PROTOTIP 01</div></header>
+    <header class="topbar"><a class="brand" href="./" aria-label="Signal Lab, inici"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M2 16h6l4-11 9 22 4-11h5"/></svg><span>SIGNAL<span class="brand-light">LAB</span></span></a><span class="topbar-description">UN PETIT LABORATORI DE SO</span><div class="prototype-badge"><span></span> 10 MÀQUINES · 24 NIVELLS</div></header>
     <main>
-      <div class="level-intro"><div><p class="eyebrow">EXPERIMENT 001 <span>/</span> EL PRIMER PATCH</p><h1>${level.title}<span>.</span></h1><p class="intro-description">${level.description}</p></div><div class="level-meta"><div class="level-tag"><span class="tiny-grid" aria-hidden="true">▦</span> NIVELL 01 <span>/ 01</span></div><p id="best-score" class="personal-best"></p></div></div>
-      <section class="target-card" aria-label="So objectiu"><div class="target-label"><span class="target-symbol" aria-hidden="true">◎</span><div><span class="eyebrow">EL TEU OBJECTIU</span><h2>Escolta. I torna'l a crear.</h2><p>Pots escoltar-lo tantes vegades com vulguis.</p></div></div><div class="target-wave" aria-hidden="true">${Array.from({length: 39}, (_, i) => `<i style="--h:${8 + Math.abs(Math.sin(i * 1.9)) * (Math.sin(i / 38 * Math.PI) * 32)}px;--delay:${i * 25}ms"></i>`).join('')}</div><button id="play-target" class="button target-button">${playIcon}<span>PLAY TARGET</span><small>02 s</small></button></section>
+      <details class="campaign-picker"><summary><span>ELS EXPERIMENTS <b>24</b></span><span id="campaign-progress"></span></summary><div id="campaign-grid" class="campaign-grid"></div></details>
+      <div class="level-intro"><div><p class="eyebrow">EXPERIMENT ${String(index + 1).padStart(3, '0')} <span>/</span> ${level.chapter ?? ''}</p><h1>${level.title}<span>.</span></h1><p class="intro-description">${level.lesson ?? level.description}</p></div><div class="level-meta"><div class="level-tag"><span class="tiny-grid" aria-hidden="true">▦</span> NIVELL ${String(index + 1).padStart(2, '0')} <span>/ ${levels.length}</span></div><p id="best-score" class="personal-best"></p></div></div>
+      <section class="target-card" aria-label="So objectiu"><div class="target-label"><span class="target-symbol" aria-hidden="true">◎</span><div><span class="eyebrow">EL TEU OBJECTIU</span><h2>Escolta. I torna'l a crear.</h2><p>Pots escoltar-lo tantes vegades com vulguis.</p></div></div><div class="target-wave" aria-hidden="true">${Array.from({length: 39}, (_, i) => `<i style="--h:${8 + Math.abs(Math.sin(i * 1.9)) * (Math.sin(i / 38 * Math.PI) * 32)}px;--delay:${i * 25}ms"></i>`).join('')}</div><button id="play-target" class="button target-button">${playIcon}<span>PLAY TARGET</span><small>${level.duration} s</small></button></section>
       <div class="workbench-heading"><h2>El teu laboratori</h2><span><i class="status-dot"></i><span id="connection-count">0 / 2 CABLES</span></span></div>
       <ol class="steps"><li data-step="1"><b>1</b><span><strong>Connecta</strong> els connectors amb cables.</span></li><li data-step="2"><b>2</b><span><strong>Ajusta</strong> els knobs i escolta.</span></li><li data-step="3"><b>3</b><span><strong>Compara</strong> el so amb l’objectiu.</span></li></ol>
       <p class="learning-guide" id="learning-guide" role="status"></p>
-      <div class="rack" id="rack"><div class="rack-rail rail-top" aria-hidden="true"></div><div class="modules">${moduleMarkup}</div><svg class="cables" aria-hidden="true"></svg><div class="rack-rail rail-bottom" aria-hidden="true"></div><div class="rack-caption" aria-hidden="true"><span>SL–01</span><span>MODULAR SOUND LABORATORY</span><span>●</span></div></div>
+      <div class="rack" id="rack"><div class="rack-rail rail-top" aria-hidden="true"></div><div class="modules ${modulesForPatch(patch).length === 4 ? 'four-modules' : ''} ${modulesForPatch(patch).length > 3 ? 'expanded' : ''}">${moduleMarkup}</div><svg class="cables" aria-hidden="true"></svg><div class="rack-rail rail-bottom" aria-hidden="true"></div><div class="rack-caption" aria-hidden="true"><span>SL–01</span><span>MODULAR SOUND LABORATORY</span><span>●</span></div></div>
       <div class="cable-instructions"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 4v5a6 6 0 0 0 12 0V4M2 3h4M14 3h4"/></svg><p id="connection-help" role="status">Clica OUT i després IN, o arrossega un cable. Clica un connector ocupat per desconnectar.</p></div>
       <div class="transport"><button class="reset-button" id="reset" title="Restaura els controls i els cables. Conserva el millor resultat."><span aria-hidden="true">↺</span> Reinicia el patch</button><p class="transport-note" id="patch-status"><span class="status-dot"></span> El so necessita un camí.</p><div class="transport-actions"><button id="play-player" class="button player-button">${playIcon}<span>PLAY MY SOUND</span></button><button id="check" class="button check-button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 10 4 4 8-8"/></svg> CHECK</button></div></div>
       <section id="result" class="result" aria-label="Resultat de la comparació"><div class="result-overview"><div class="score-block"><span class="eyebrow" id="score-label">COINCIDÈNCIA</span><div><strong id="score">—</strong><span>%</span></div></div><div class="result-content"><h3 id="result-title">Cada ajust et porta més a prop.</h3><p id="result-hint">Escolta l’objectiu, construeix el teu so i prem CHECK.</p><div class="score-track"><div id="score-fill"></div></div></div><div class="result-stamp" id="result-stamp" aria-hidden="true">◎</div></div><div class="parameter-feedback" id="parameter-feedback" aria-label="Pistes per paràmetre" hidden></div></section><p class="sr-only" id="result-announcement" role="status" aria-live="polite"></p>
+      <div class="level-advance"><button id="next-level" class="button check-button" hidden>SEGÜENT EXPERIMENT <span aria-hidden="true">→</span></button><p id="campaign-complete" hidden>Has completat els 24 experiments. El laboratori és teu.</p></div>
       <p class="save-status" id="save-status"></p>
-    </main><footer class="footer"><span>ESCOLTA. CONNECTA. DESCOBREIX.</span><span>Arrossega els knobs ↕ <span class="footer-separator">/</span> Shift per afinar <span class="footer-separator">/</span> També pots escriure els valors</span></footer>
+    </main><footer class="footer"><span>ESCOLTA. CONNECTA. DESCOBREIX.</span><span>Arrossega els knobs ↕ <span class="footer-separator">/</span> Shift per afinar <span class="footer-separator">/</span> També pots escriure els valors <span class="footer-separator">/</span> Temps i notes: torna a prémer PLAY</span></footer>
   </div>`;
 
   const get = <T extends HTMLElement = HTMLElement>(selector: string) => root.querySelector<T>(selector)!;
   const setHelp = (message: string) => { get('#connection-help').textContent = message; };
+  const renderCampaign = () => {
+    let completed = 0;
+    const cards = levels.map((experiment, position) => {
+      const best = experiment === level ? bestPatch : new ProgressStore(experiment).load().progress.bestPatch;
+      const score = best ? scorePatch(best, experiment.target).score : null;
+      if (score === 100) completed++;
+      const chapter = position % 4 === 0 ? `<h3>${experiment.chapter}</h3>` : '';
+      return `${chapter}<button type="button" data-level="${experiment.id}" class="experiment-card ${experiment === level ? 'current' : ''} ${score === 100 ? 'completed' : ''}" ${experiment === level ? 'aria-current="true"' : ''}><span class="experiment-number">${String(position + 1).padStart(2, '0')}<b>${score === 100 ? '✓' : score === null ? '—' : `${score}%`}</b></span><strong>${experiment.title}</strong><small>${modulesForPatch(experiment.target).filter(id => id !== 'output').map(id => moduleDefinition(id).title).join(' · ')}</small></button>`;
+    }).join('');
+    get('#campaign-grid').innerHTML = cards;
+    get('#campaign-progress').textContent = `${completed} / ${levels.length} completats`;
+    get('#campaign-complete').hidden = completed !== levels.length;
+  };
   const updateBest = () => {
     const bestScore = bestPatch ? scorePatch(bestPatch, level.target).score : null;
     get('#best-score').textContent = bestScore === 100 ? '✓ Nivell completat · millor 100%' : bestScore === null ? 'Millor resultat: —' : `Millor resultat: ${bestScore}%`;
     get('#best-score').classList.toggle('completed', bestScore === 100);
+    get('#next-level').hidden = bestScore !== 100 || index === levels.length - 1;
+    renderCampaign();
   };
   const setSaveStatus = (text: string, unavailable = false) => {
     get('#save-status').textContent = text;
@@ -161,7 +184,7 @@ export function mountLab(root: HTMLElement): void {
   };
   const updateConnections = () => {
     const complete = isCompletePatch(patch);
-    get('#connection-count').textContent = `${patch.connections.length} / 2 CABLES`;
+    get('#connection-count').textContent = `${patch.connections.length} / ${routes.length} CABLES`;
     get('#patch-status').innerHTML = `<span class="status-dot ${complete ? 'ready' : ''}"></span> ${complete ? 'Circuit complet. Fes-lo sonar.' : 'El so necessita un camí.'}`;
     root.dataset.connected = String(complete);
     if (playing !== 'player') get('#signal-caption').textContent = complete ? 'READY' : 'NO INPUT';
@@ -171,12 +194,13 @@ export function mountLab(root: HTMLElement): void {
     patch.connections = connections;
     changed(true);
     updateConnections();
-  }, setHelp);
-  const knobSetters = (['frequency', 'cutoff', 'resonance'] as ParameterId[]).map(id =>
-    ({ id, set: bindKnob(root, id, patch.parameters[id], value => { patch.parameters[id] = value; changed(); }) }));
+  }, setHelp, routes);
+  const knobSetters = parameterIdsForPatch(patch).map(id =>
+    ({ id, set: bindKnob(root, id, parameterValue(patch.parameters, id), value => { patch.parameters[id] = value; const timing = ['attack', 'release', 'reverbDecay', 'tempo', 'step1', 'step2', 'step3', 'step4'].includes(id); if (timing && playing === 'player') { stop(); setHelp('Temps o notes actualitzats. Prem PLAY MY SOUND per escoltar la frase nova.'); } changed(); }) }));
   const updateWaveform = () => {
     root.querySelectorAll<HTMLElement>('[data-wave]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.wave === patch.parameters.waveform)));
-    get('#wave-hint').textContent = waveHints[patch.parameters.waveform];
+    const hint = get('#wave-hint');
+    if (hint) hint.textContent = waveHints[patch.parameters.waveform];
   };
   root.querySelectorAll<HTMLButtonElement>('[data-wave]').forEach(button => button.addEventListener('click', () => {
     if (patch.parameters.waveform === button.dataset.wave) return;
@@ -187,7 +211,7 @@ export function mountLab(root: HTMLElement): void {
     if (playing === kind) { stop(); return; }
     stop();
     if (kind === 'player' && !isCompletePatch(patch)) {
-      setHelp('Encara no arriba cap so a OUTPUT. Connecta OSCILLATOR OUT → FILTER IN i FILTER OUT → OUTPUT IN.');
+      setHelp('El patch encara és incomplet. Segueix els connectors il·luminats i la pista de sobre del laboratori.');
       return;
     }
     const current = request;
@@ -227,14 +251,26 @@ export function mountLab(root: HTMLElement): void {
     lastCheckedPatch = null;
     lastResult = null;
     cables.setConnections(patch.connections);
-    knobSetters.forEach(({ id, set }) => set(patch.parameters[id]));
+    knobSetters.forEach(({ id, set }) => set(parameterValue(patch.parameters, id)));
     updateWaveform(); updateConnections(); renderResult();
     setHelp('Patch reiniciat. El millor resultat es conserva. Clica OUT i després IN per connectar.');
     updateGuidance();
     saveProgress(true);
   });
-  document.addEventListener('visibilitychange', () => { if (document.hidden) { stop(); flushProgress(); } });
-  window.addEventListener('pagehide', () => { stop(); flushProgress(); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) { stop(); flushProgress(); } }, { signal: lifecycle.signal });
+  window.addEventListener('pagehide', () => { stop(); flushProgress(); }, { signal: lifecycle.signal });
+  const navigate = (next: Level) => {
+    flushProgress(); stop(); cables.dispose(); lifecycle.abort(); engine.dispose();
+    try { localStorage.setItem('signal-lab:last-level', next.id); } catch { /* Progress warning handles unavailable storage. */ }
+    mountLab(root, next);
+    root.querySelector('h1')?.scrollIntoView({ block: 'start' });
+  };
+  get('#campaign-grid').addEventListener('click', event => {
+    const id = (event.target as HTMLElement).closest<HTMLElement>('[data-level]')?.dataset.level;
+    const next = levels.find(item => item.id === id);
+    if (next && next !== level) navigate(next);
+  });
+  get('#next-level').addEventListener('click', () => { if (levels[index + 1]) navigate(levels[index + 1]); });
   cables.setConnections(patch.connections);
   renderResult();
   updateBest();

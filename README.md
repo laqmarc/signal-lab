@@ -1,114 +1,106 @@
 # Signal Lab
 
-Un únic nivell jugable de puzzles de síntesi musical. Escolta el so objectiu i recrea'l connectant tres màquines: **OSCILLATOR → FILTER → OUTPUT**.
+Un laboratori de puzzles de síntesi musical amb **24 experiments, 6 capítols i 10 màquines**. Escolta un so objectiu, connecta el circuit i ajusta els controls fins a recrear-lo.
 
 ## Executar en local
 
-Requisits: Node.js 22.18+ o 24+ i npm. Des d'aquesta carpeta:
+Node.js 22.18+ o 24+ i npm:
 
 ```sh
 npm install
 npm run dev
+npm run build    # TypeScript + compilació a dist/
+npm run preview  # Serveix la compilació
+npm test         # Proves de lògica, campanya i persistència
 ```
 
-Obre l'adreça local que imprimeix Vite (normalment http://127.0.0.1:5173).
-
-```sh
-npm run build    # Comprovació TypeScript i compilació a dist/
-npm run preview  # Servir la compilació localment
-npm test         # Proves de connexions, controls i puntuació
-```
-
-Les úniques dependències directes són TypeScript i Vite, per al desenvolupament. L'aplicació no necessita dependències en temps d'execució, serveis externs, fonts remotes ni backend.
+Obre l'adreça de Vite, normalment http://127.0.0.1:5173. Les úniques dependències són TypeScript i Vite per al desenvolupament. No hi ha backend, fonts remotes, llibreries d'àudio ni serveis externs.
 
 ## Com jugar
 
-1. Prem **PLAY TARGET** per escoltar una nota de dos segons.
-2. Clica **OUT** de l'oscil·lador i **IN** del filtre. Després, **OUT** del filtre i **IN** de la sortida. També pots arrossegar els cables o fer les connexions en ordre invers.
-3. Tria sine, square, sawtooth o triangle. Ajusta FREQUENCY, CUTOFF i RESONANCE.
-4. Prem **PLAY MY SOUND** i compara'l amb l'objectiu.
-5. Prem **CHECK**. Rebràs una puntuació de 0 a 100% i quatre pistes: forma d'ona, to, brillantor i caràcter. Cada pista indica si el control està encertat o si cal pujar-lo, baixar-lo o canviar l'ona. El 100% completa el nivell.
+1. Tria un experiment al selector **ELS EXPERIMENTS**. Tots estan disponibles; l'ordre proposat introdueix els conceptes gradualment.
+2. Prem **PLAY TARGET**. La durada de cada frase apareix al botó.
+3. Uneix els connectors il·luminats amb clics o arrossegant cables. La guia explica el següent pas i també admet connectar en ordre invers.
+4. Ajusta els knobs i prem **PLAY MY SOUND**. Els cables violetes porten control: LFO → FILTER MOD i SEQUENCER → OSCILLATOR PITCH.
+5. Prem **CHECK**. Cada control actiu rep una pista de direcció, sense mostrar el valor objectiu. El 100% completa el nivell i habilita **SEGÜENT EXPERIMENT**.
 
-La guia sobre les màquines indica el següent pas. Un contorn discontinu assenyala el connector de sortida per on començar; en seleccionar-lo, s'il·lumina el connector compatible. La guia s'adapta encara que facis les connexions en un altre ordre.
+| Capítol | Nivells | Aprenentatge |
+| --- | --- | --- |
+| Els fonaments | 1–4 | Ones, to i filtre |
+| La forma del temps | 5–8 | Envelope i Noise |
+| Moviment i textura | 9–12 | LFO i Distortion |
+| Espais i ecos | 13–16 | Delay i Reverb |
+| Petites melodies | 17–20 | Sequencer, intervals i tempo |
+| El laboratori complet | 21–24 | Combinacions de màquines |
+
+## Màquines
+
+| Màquina | Controls | Efecte real |
+| --- | --- | --- |
+| OSCILLATOR | sine, square, sawtooth, triangle; frequency | Genera una ona periòdica |
+| FILTER | cutoff, resonance | Filtre lowpass |
+| ENVELOPE | attack, release | Entrada i desaparició del volum |
+| LFO | rate, depth | Modula la freqüència del filtre amb una ona lenta |
+| NOISE | level | Genera soroll blanc |
+| DISTORTION | drive | Saturació amb una corba de waveshaping |
+| DELAY | time, mix | Eco amb feedback fix de 0,3 |
+| REVERB | decay, mix | Convolució amb una resposta impulsional generada |
+| SEQUENCER | tempo, step 1–4 | Repeteix quatre notes, en semitons sobre la freqüència base |
+| OUTPUT | — | Sortida d'àudio |
+
+Envelope fa una entrada, una breu fase sostinguda i una sortida. Quan comparteix patch amb Sequencer, sosté la frase abans del release. Delay i Reverb disposen d'un tram final per escoltar les cues; tota reproducció té durada limitada i fade final. Noise i les respostes de Reverb utilitzen una llavor fixa perquè target i jugador siguin reproduïbles.
 
 Controls:
 
-- Knobs: arrossega amunt/avall; mantén Shift per afinar. També pots escriure el valor numèric.
-- Teclat: Tab per navegar; fletxes per ajustar un knob; Page Up/Down per fer passos més grans; Home/End per als extrems; Enter/Espai per activar un connector.
-- Clica un connector ocupat per retirar-ne el cable. Esc cancel·la una connexió pendent.
-- Torna a prémer el botó de reproducció per aturar el so. Una nova reproducció atura l'anterior. Durant PLAY MY SOUND, els knobs i la forma d'ona actualitzen la veu existent; els valors numèrics fan una transició curta i suau. La nota continua durant els seus dos segons originals. Canviar cables atura la nota del jugador. Ajustar el patch mentre sona l'objectiu no modifica el so objectiu.
-- **Reinicia el patch** restaura els valors inicials, elimina els cables i atura l'àudio. Conserva el millor resultat i el fet d'haver completat el nivell.
+- Arrossega els knobs verticalment; **Shift** afina. També pots escriure el valor.
+- **Tab**, fletxes, **Page Up/Down** i **Home/End** permeten jugar amb teclat. Enter/Espai activa els connectors; **Esc** cancel·la una connexió pendent.
+- Clica un connector ocupat per retirar-ne el cable. Un patch incomplet, inclosos els cables de control, no sona i puntua 0%.
+- Els controls de timbre, volum, modulació i mescla s'actualitzen durant la reproducció del jugador. **Attack, release, decay, tempo i notes aturen la frase: torna a prémer PLAY per escoltar la nova configuració.** Canviar cables també atura la veu.
+- Una reproducció substitueix l'anterior. Canviar de nivell o ocultar la pàgina atura l'àudio. Editar el patch no altera el target.
+- **Reinicia el patch** restaura controls i cables, conservant el rècord. Si edites després de CHECK, el resultat s'etiqueta **RESULTAT ANTERIOR** fins a tornar a comprovar-lo.
 
-Després d'editar un patch ja avaluat, la puntuació es conserva amb l'etiqueta **RESULTAT ANTERIOR**. Les pistes antigues s'amaguen fins que tornes a prémer CHECK, per evitar confondre-les amb l'estat actual.
+## Progrés
 
-Una partida nova comença desconnectada. Si falta un cable, PLAY MY SOUND no emet so i CHECK dona 0%.
+Cada experiment conserva el patch, l'última comprovació, el millor resultat i els passos d'aprenentatge. El selector mostra els rècords i el nombre de nivells completats. Es recupera l'últim experiment visitat sense autoplay. El primer nivell manté el seu identificador, revisió i format de desat: les partides de la versió anterior continuen funcionant.
 
-## Desat de la partida
+Les dades són locals al navegador i a l'origen: `localhost`, `127.0.0.1` i ports diferents tenen partides separades. No hi ha compte ni sincronització. Si l'emmagatzematge falla, el joc ho indica i permet continuar jugant. Les dades invàlides s'ignoren. Cada escriptura conserva el rècord més alt que ja hi havia desat, encara que vingui d'una altra pestanya.
 
-El joc desa automàticament els valors, els cables, l'últim patch comprovat, el millor resultat i els passos d'aprenentatge. Quan recarregues o tornes a obrir el joc, reprens el mateix estat **sense reproducció automàtica d'àudio**. La línia sota el resultat informa si la partida s'ha recuperat o desat.
-
-- El rècord apareix al costat del títol. Arribar al 100% hi deixa la marca de nivell completat, encara que després experimentis o reiniciïs el patch.
-- Un patch modificat després de CHECK continua mostrant **RESULTAT ANTERIOR** en recuperar-lo. Es recalcula la puntuació a partir del patch que es va comprovar, no es confia en un percentatge emmagatzemat.
-- El desat és local al navegador i a l'adreça del joc. `localhost`, `127.0.0.1` i ports diferents tenen emmagatzematges separats. No hi ha compte ni sincronització entre dispositius.
-- Si dues pestanyes desen, l'última escriptura determina el patch actual; el millor resultat es conserva. Una pestanya sense canvis pendents no sobreescriu la partida quan es tanca.
-- Si el navegador bloqueja l'emmagatzematge o no queda espai, el joc continua funcionant i mostra que els canvis no es podran recuperar en tancar.
-- Esborrar les dades del lloc al navegador elimina la partida i el rècord. Les dades invàlides o d'una revisió de nivell incompatible s'ignoren i s'inicia un patch nou.
-
-## Arquitectura mínima
+## Arquitectura
 
 ```text
 src/
-  audio/engine.ts          Web Audio, construcció del graf i cicle de vida de les notes
-  modules/definitions.ts   Tipus, formes d'ona, ports, rangs i definicions dels mòduls
-  connections/patch.ts     Connexions permeses, desconnexió i validació del patch
-  levels/first-signal.ts   Definició de l'únic nivell, patch inicial i objectiu
-  scoring/score.ts         Comparació de paràmetres i pistes, sense dependències de la UI
-  progress/storage.ts      Desat versionat, validació i recuperació de la partida
-  ui/lab.ts               Estat del joc, panells i interaccions
-  ui/knob.ts              Control per ratolí, tacte, teclat i entrada numèrica
-  ui/cables.ts            Connexions per clic/arrossegament i representació SVG
-  ui/guidance.ts          Guia d'aprenentatge segons el progrés del jugador
-  style.css              Aparença dels panells i adaptació a pantalles estretes
-  main.ts                Entrada de l'aplicació
+  audio/engine.ts          Graf Web Audio, veus, textures i cicle de vida
+  modules/definitions.ts   Màquines, ports, tipus i rangs dels controls
+  connections/patch.ts     Rutes d'àudio/control i validació de connexions
+  levels/first-signal.ts   Contracte Level i primer experiment compatible
+  levels/catalog.ts        Campanya de 24 experiments i últim nivell visitat
+  scoring/score.ts         Comparació dels paràmetres actius i pistes
+  progress/storage.ts      Desat per nivell, validació i recuperació
+  ui/lab.ts               Panells, selector, progrés i interaccions
+  ui/knob.ts              Controls de ratolí, tacte, teclat i valors numèrics
+  ui/cables.ts            Cables SVG i interacció dels connectors
+  ui/guidance.ts          Guia contextual d'aprenentatge
+  style.css              Panells físics i distribució adaptable
 ```
 
-L'estat `Patch` conté els paràmetres i una llista de connexions entre ports. La UI el modifica; el motor rep una còpia per cada reproducció i actualitzacions dels paràmetres durant la nota del jugador. La puntuació el compara amb l'objectiu del nivell, que no es modifica. No s'inclou cap mòdul addicional.
+`Patch.modules` enumera les màquines disponibles. Les màquines d'àudio segueixen aquest ordre; LFO i Sequencer tenen rutes de control pròpies. Només es connecten els nodes indicats als cables. La UI i la puntuació deriven els controls de les definicions dels mòduls. Afegir un experiment amb màquines existents només requereix definir-lo al catàleg.
 
-Per afegir mòduls més endavant cal ampliar els tipus i definicions, registrar els nodes d'àudio corresponents i definir les connexions del nou nivell. Els controls visuals, el graf d'àudio i l'avaluació es mantenen en fitxers separats.
+El motor rep una còpia del patch. Target i jugador utilitzen el mateix constructor `createVoice`, guany de sortida 0,045 i fades. La UI disposa listeners i observadors en canviar de nivell, i el motor tanca el context anterior.
 
-El desat utilitza `localStorage` amb una clau per nivell, versió d'esquema i revisió del nivell. Cal incrementar `Level.revision` quan un canvi d'objectiu, de puntuació o de controls faci incompatibles les partides anteriors. Abans de recuperar un patch es validen els rangs, els passos dels controls, les formes d'ona i els cables permesos. Les actualitzacions dels knobs s'agrupen durant 180 ms; CHECK, reinici i sortida de la pàgina desen els canvis pendents immediatament.
+El desat usa `localStorage`, esquema versionat i una revisió per nivell. Canvis incompatibles d'objectiu, controls o puntuació han d'incrementar `Level.revision`. Es validen màquines, rangs, passos i cables abans de restaurar. Els ajustos es desen després de 180 ms; CHECK, reinici, navegació i sortida desen immediatament els canvis pendents.
 
-## Àudio i puntuació
+## Puntuació
 
-Tant l'objectiu com el jugador utilitzen `createVoice`: `OscillatorNode` → `BiquadFilterNode` de tipus lowpass → `GainNode` → sortida del navegador. Només es connecten els nodes indicats pels cables del patch. El guany fix de 0,045 i els fades d'entrada/sortida són idèntics per als dos sons. El context s'activa després de prémer PLAY; no hi ha autoplay.
+No s'utilitza FFT ni comparació d'àudio. Només puntuen els paràmetres de les màquines presents: en un nivell Noise no es puntuen waveform ni frequency.
 
-No s'utilitza FFT ni cap anàlisi d'àudio per puntuar. Els gràfics i LEDs de la interfície són indicadors d'activitat, no oscil·loscopis ni mesuradors de nivell.
+Els pesos són 30 per waveform, 30 per frequency, 25 per cutoff, 15 per resonance i 15 per cada control addicional. Es normalitzen pel total de pesos actius. Waveform exigeix coincidència; frequency i cutoff utilitzen distàncies logarítmiques i la resta distàncies lineals dins el seu rang.
 
-Amb el circuit complet, la puntuació és la suma ponderada de:
-
-| Paràmetre | Pes | Similitud |
-| --- | ---: | --- |
-| Forma d'ona | 30% | Coincidència exacta |
-| Freqüència | 30% | Distància logarítmica en octaves; 0 a partir de 2 octaves |
-| Cutoff | 25% | Distància logarítmica en octaves; 0 a partir de 4 octaves |
-| Resonance | 15% | Distància lineal sobre el rang 0,1–8 |
-
-Les similituds es limiten a [0, 1]. El resultat es limita a [0, 100]; qualsevol diferència es queda com a màxim en 99%. El 100% exigeix tots els valors exactes. La pista correspon al paràmetre amb menys similitud i indica en quina direcció ajustar-lo.
-
-Les quatre targetes mostren les similituds individuals abans d'aplicar els pesos. Cada targeta reserva el 100% per a la coincidència exacta. No es mostren valors objectiu ni pistes per paràmetre quan el circuit està incomplet.
+El 100% exigeix circuit complet i valors exactes. Qualsevol diferència queda com a màxim al 99%. Les pistes indiquen quin control convé pujar, baixar o canviar. LEDs, traça i barres són indicadors d'activitat, no analitzadors del senyal.
 
 ## Validació
 
-- `npm test`: 25 proves amb el runner integrat de Node. Comproven connexions, puntuació, controls, pistes i guia d'aprenentatge, a més del desat i la recuperació de patches, conservació del rècord, dades invàlides, incompatibilitats de versió i errors d'emmagatzematge.
-- Amb `npm run dev` actiu, obre `/tests/audio.html` i prem **Executa les proves**: 10 proves amb `OfflineAudioContext` i el motor real, sense emetre àudio. Comproven mostres idèntiques per al mateix patch, silenci quan falten cables, diferències entre formes d'ona, efecte dels controls, absència de saturació en els casos límit a 44,1/48 kHz i final de nota. També verifiquen els canvis en viu dels knobs i la forma d'ona sense reiniciar ni allargar la nota.
-- Recorregut de UI comprovat al navegador: puntuació inicial de 0%, connexió per clic i arrossegament, knobs amb teclat i ratolí, valors numèrics, reproducció, canvi entre target/jugador, reinici i solució al 100%.
-- Persistència comprovada al navegador amb la versió compilada: recàrrega immediata després d'editar una partida parcial, restauració de pistes actuals i resultats anteriors, victòria al 100% i reinici conservant el rècord. Les proves de navegador de desat utilitzen un port separat per no modificar la partida del jugador.
+- `npm test`: **30 proves** de connexions, controls, puntuació, aprenentatge, persistència i campanya. Inclou resoldre els 24 nivells seguint pistes, validar tots els targets, rebutjar cables incompatibles i recuperar cada partida independentment.
+- Amb Vite actiu, `/tests/audio.html` → **Executa les proves**: **15 proves** amb Web Audio real. Renderitzen els 24 objectius, comproven senyals finits, absència de saturació als casos provats, silenci final, determinisme i efecte de cada control nou. També cobreixen canvis en viu, veus incompletes i finalització/aturada de fonts Noise, LFO i Sequencer. La prova del cicle de vida emet sons breus; la resta renderitza fora de línia.
+- Proves manuals al navegador en un origen separat de la partida de l'usuari: selector, solució d'Envelope i Sequencer al 100%, cable PITCH obligatori, controls temporals, avanç i restauració del resultat després de recarregar.
 
-<details>
-<summary>Solució del nivell (per a desenvolupament)</summary>
-
-Sawtooth, frequency **220 Hz**, cutoff **900 Hz**, resonance **2,4 Q**, amb els dos cables connectats.
-
-</details>
-
-Referències tècniques: [Vite](https://vite.dev/guide/), [BiquadFilterNode](https://developer.mozilla.org/en-US/docs/Web/API/BiquadFilterNode) i [AudioContext.resume](https://developer.mozilla.org/en-US/docs/Web/API/AudioContext/resume).
+- Distribució estreta revisada a 390 px amb les vuit màquines del nivell final: sense desbordament horitzontal de pàgina, panells ni controls.

@@ -1,59 +1,48 @@
-import { isCompletePatch } from '../connections/patch.ts';
-import type { Patch } from '../modules/definitions.ts';
+import { isCompletePatch, routesForPatch } from '../connections/patch.ts';
+import { modulesForPatch, parameterDefinitions, parameterIdsForPatch, parameterValue, type ParameterId, type Patch } from '../modules/definitions.ts';
 
 export interface ParameterFeedback {
-  parameter: keyof Patch['parameters'];
-  label: string;
-  control: string;
-  percent: number;
-  direction: 'match' | 'change' | 'up' | 'down';
-  instruction: string;
+  parameter: keyof Patch['parameters']; label: string; control: string; percent: number;
+  direction: 'match' | 'change' | 'up' | 'down'; instruction: string;
 }
-
 export interface ScoreResult {
-  score: number;
-  complete: boolean;
-  solved: boolean;
-  hint: string;
-  parts: { waveform: number; frequency: number; cutoff: number; resonance: number };
-  feedback: ParameterFeedback[];
+  score: number; complete: boolean; solved: boolean; hint: string;
+  parts: Record<string, number>; feedback: ParameterFeedback[];
 }
-
 const similarity = (distance: number) => Math.max(0, 1 - distance);
-
 export function scorePatch(player: Patch, target: Patch): ScoreResult {
   const p = player.parameters;
   const t = target.parameters;
-  const parts = {
-    waveform: p.waveform === t.waveform ? 1 : 0,
-    frequency: similarity(Math.abs(Math.log2(p.frequency / t.frequency)) / 2),
-    cutoff: similarity(Math.abs(Math.log2(p.cutoff / t.cutoff)) / 4),
-    resonance: similarity(Math.abs(p.resonance - t.resonance) / 7.9),
-  };
-  const complete = isCompletePatch(player);
-  const solved = complete && Object.values(parts).every(value => value === 1);
-  const weighted = parts.waveform * 30 + parts.frequency * 30 + parts.cutoff * 25 + parts.resonance * 15;
-  // Reserve 100% for an exact match, even when rounding would hide a small difference.
+  const ids: (ParameterId | 'waveform')[] = [...(modulesForPatch(target).includes('oscillator') ? ['waveform' as const] : []), ...parameterIdsForPatch(target)];
+  const parts: Record<string, number> = {};
+  for (const id of ids) {
+    if (id === 'waveform') parts[id] = p.waveform === t.waveform ? 1 : 0;
+    else {
+      const a = parameterValue(p, id), b = parameterValue(t, id), definition = parameterDefinitions[id];
+      const distance = id === 'frequency' ? Math.abs(Math.log2(a / b)) / 2 : id === 'cutoff' ? Math.abs(Math.log2(a / b)) / 4 : Math.abs(a - b) / (definition.max - definition.min);
+      parts[id] = similarity(distance);
+    }
+  }
+  const complete = modulesForPatch(player).join(',') === modulesForPatch(target).join(',') && isCompletePatch(player, routesForPatch(target));
+  const solved = complete && ids.every(id => parts[id] === 1);
+  const weights: Partial<Record<ParameterId | 'waveform', number>> = { waveform: 30, frequency: 30, cutoff: 25, resonance: 15 };
+  const totalWeight = ids.reduce((sum, id) => sum + (weights[id] ?? 15), 0);
+  const weighted = ids.reduce((sum, id) => sum + parts[id] * (weights[id] ?? 15), 0) / totalWeight * 100;
   const score = complete ? (solved ? 100 : Math.min(99, Math.round(weighted))) : 0;
-  const feedback: ParameterFeedback[] = complete ? (Object.keys(parts) as (keyof typeof parts)[]).map(parameter => {
+  const feedback: ParameterFeedback[] = complete ? ids.map(parameter => {
     const match = parts[parameter] === 1;
-    const labels = { waveform: 'Forma d’ona', frequency: 'To', cutoff: 'Brillantor', resonance: 'Caràcter' };
-    const controls = { waveform: 'WAVEFORM', frequency: 'FREQUENCY', cutoff: 'CUTOFF', resonance: 'RESONANCE' };
-    const direction = match ? 'match' : parameter === 'waveform' ? 'change' : p[parameter] > t[parameter] ? 'down' : 'up';
+    const direction = match ? 'match' : parameter === 'waveform' ? 'change' : parameterValue(p, parameter) > parameterValue(t, parameter) ? 'down' : 'up';
     const instructions = { match: 'Encertat', change: 'Prova una altra ona', down: 'Baixa el valor', up: 'Puja el valor' };
-    return { parameter, label: labels[parameter], control: controls[parameter], percent: match ? 100 : Math.min(99, Math.round(parts[parameter] * 100)), direction, instruction: instructions[direction] };
+    return { parameter, label: parameter === 'waveform' ? 'Forma d’ona' : parameterDefinitions[parameter].name,
+      control: parameter === 'waveform' ? 'WAVEFORM' : parameterDefinitions[parameter].label,
+      percent: match ? 100 : Math.min(99, Math.round(parts[parameter] * 100)), direction, instruction: instructions[direction] };
   }) : [];
-  let hint = 'So recreat! Has trobat la primera freqüència.';
-  if (!complete) hint = 'Falta camí per al so. Connecta OSCILLATOR → FILTER → OUTPUT.';
+  let hint = 'So recreat! Has resolt aquest experiment.';
+  if (!complete) hint = 'Falta una connexió. Completa els cables del camí de so i els cables de control violetes.';
   else if (!solved) {
-    const worst = (Object.keys(parts) as (keyof typeof parts)[]).sort((a, b) => parts[a] - parts[b])[0];
-    const hints = {
-      waveform: 'Prova una altra forma d’ona. Cada forma té un caràcter diferent.',
-      frequency: p.frequency > t.frequency ? 'El teu so és massa agut. Baixa una mica FREQUENCY.' : 'El teu so és massa greu. Puja una mica FREQUENCY.',
-      cutoff: p.cutoff > t.cutoff ? 'El teu so és massa brillant. Baixa CUTOFF per suavitzar-lo.' : 'El teu so és massa fosc. Puja CUTOFF per obrir-lo.',
-      resonance: p.resonance > t.resonance ? 'El filtre destaca massa. Baixa una mica RESONANCE.' : 'Falta una mica de caràcter. Puja RESONANCE.',
-    };
-    hint = hints[worst];
+    const worst = feedback.reduce((a, b) => parts[a.parameter] <= parts[b.parameter] ? a : b);
+    hint = worst.parameter === 'waveform' ? 'Prova una altra forma d’ona. Cada forma té un caràcter diferent.'
+      : `${worst.instruction === 'Puja el valor' ? 'Puja' : 'Baixa'} ${worst.control}. ${parameterDefinitions[worst.parameter].hint}.`;
   }
   return { score, complete, solved, hint, parts, feedback };
 }

@@ -81,7 +81,7 @@ test('all controls clamp their numeric and drag values to their range', () => {
     assert.equal(normalizeParameter(id, NaN), d.min);
     assert.equal(parameterAtPosition(id, -1), d.min);
     assert.equal(parameterAtPosition(id, 2), d.max);
-    assert.equal(normalizeParameter(id, firstSignal.target.parameters[id]), firstSignal.target.parameters[id]);
+    assert.equal(normalizeParameter(id, firstSignal.target.parameters[id] ?? d.initial), firstSignal.target.parameters[id] ?? d.initial);
   }
 });
 
